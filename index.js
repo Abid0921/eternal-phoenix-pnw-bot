@@ -10,11 +10,12 @@ const app = express();
 app.get("/", (req, res) => res.send("Bot running"));
 app.listen(3000, () => console.log("Keep-alive server started"));
 
-// Discord client with safe intents
+// Discord client with full intents for privileged commands
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.MessageContent
   ],
   partials: [Partials.Channel]
@@ -34,16 +35,16 @@ async function pnw(endpoint) {
   }
 }
 
-// Prefix
-const PREFIX = "+";
+// Command prefix
+const PREFIX = process.env.PREFIX || "+";
 
-// Global error handlers
+// Error handlers
 client.on("error", (err) => console.error("Discord client error:", err));
 process.on("unhandledRejection", (reason) =>
   console.error("Unhandled promise rejection:", reason)
 );
 
-// Message handler
+// Message-based command handler
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
   if (!message.content.startsWith(PREFIX)) return;
@@ -112,17 +113,39 @@ client.on("messageCreate", async (message) => {
       return message.reply(`🎯 Spy target: Nation **${pick.defender_nation_id}**`);
     }
 
-    // Disabled for safe intents
-    if (["inactive", "colorbloc", "policyaudit"].includes(command)) {
+    // +inactive
+    if (command === "inactive") {
+      const members = await message.guild.members.fetch();
+      const inactive = members.filter(m => m.presence?.status === "offline");
       return message.reply(
-        "This command requires GuildMembers intent; currently disabled for Render safe deployment."
+        `Inactive members: ${inactive.map(m => m.user.tag).join(", ") || "None"}`
       );
     }
+
+    // +colorbloc
+    if (command === "colorbloc") {
+      const members = await message.guild.members.fetch();
+      const wrongColor = members.filter(m => m.roles.cache.has("wrongRoleID")); // Replace with actual color role ID
+      return message.reply(
+        `Members in wrong color bloc: ${wrongColor.map(m => m.user.tag).join(", ") || "None"}`
+      );
+    }
+
+    // +policyaudit
+    if (command === "policyaudit") {
+      const members = await message.guild.members.fetch();
+      // Example: check policy role
+      const wrongPolicy = members.filter(m => !m.roles.cache.has("correctPolicyRoleID"));
+      return message.reply(
+        `Members with wrong policy: ${wrongPolicy.map(m => m.user.tag).join(", ") || "None"}`
+      );
+    }
+
   } catch (err) {
     console.error("Command error:", err);
     message.reply("An error occurred while executing this command.");
   }
 });
 
-// Login bot
+// Login
 client.login(process.env.BOT_TOKEN);

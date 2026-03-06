@@ -27,14 +27,15 @@ const API_KEY = process.env.PNW_KEY;
 
 async function pnw(endpoint) {
   try {
-    const res = await fetch(`${API}/${endpoint}&key=${API_KEY}`);
-    return await res.json();
+    const url = `https://api.politicsandwar.com/api/${endpoint}&key=${API_KEY}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    return data;
   } catch (err) {
     console.error("PNW API Error:", err);
-    return {};
+    return null;
   }
 }
-
 // Command prefix
 const PREFIX = process.env.PREFIX || "+";
 
@@ -54,19 +55,20 @@ client.on("messageCreate", async (message) => {
 
   try {
     // +nation <id>
-    if (command === "nation") {
-      const id = args[0];
-      if (!id) return message.reply("Please provide a nation ID.");
-      const data = await pnw(`nation?id=${id}`);
-      if (!data.nation) return message.reply("Nation not found.");
-      return message.reply(
-        `🏳️ **${data.nation.name}**\n` +
-        `👤 Leader: ${data.nation.leader}\n` +
-        `🌆 Cities: ${data.nation.cities}\n` +
-        `📊 Score: ${data.nation.score}`
-      );
-    }
+   if (command === "nation") {
+  const id = args[0];
+  if (!id) return message.reply("Provide a nation ID.");
 
+  const data = await pnw(`nation/id=${id}?`);
+  if (!data || !data.name) return message.reply("Nation not found.");
+
+  message.reply(
+    `🏳️ ${data.name}
+👤 Leader: ${data.leadername}
+🏙 Cities: ${data.cities}
+📊 Score: ${data.score}`
+  );
+}
     // +alliance <id>
     if (command === "alliance") {
       const id = args[0];

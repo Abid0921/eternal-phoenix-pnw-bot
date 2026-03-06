@@ -7,147 +7,166 @@ dotenv.config();
 
 // Keep-alive server for Render
 const app = express();
-app.get("/", (req, res) => res.send("Bot running"));
-app.listen(3000, () => console.log("Keep-alive server started"));
+app.get("/", (req, res) => res.send("Bot alive"));
+app.listen(3000, () => console.log("Keep alive running"));
 
-// Discord client with full intents for privileged commands
+// Discord client
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers
   ],
   partials: [Partials.Channel]
 });
 
-// PnW API helper
-const API = "https://api.politicsandwar.com/v1";
+const PREFIX = process.env.PREFIX || "+";
 const API_KEY = process.env.PNW_KEY;
 
-async function pnw(endpoint) {
+// Warroom role storage
+let warRoles = [];
+
+// API helper
+async function pnw(url) {
   try {
-    const url = `https://api.politicsandwar.com/api/${endpoint}&key=${API_KEY}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    return data;
+    const res = await fetch(`${url}&key=${API_KEY}`);
+    return await res.json();
   } catch (err) {
     console.error("PNW API Error:", err);
     return null;
   }
 }
-// Command prefix
-const PREFIX = process.env.PREFIX || "+";
 
-// Error handlers
-client.on("error", (err) => console.error("Discord client error:", err));
-process.on("unhandledRejection", (reason) =>
-  console.error("Unhandled promise rejection:", reason)
-);
+client.on("ready", () => {
+  console.log(`Bot online as ${client.user.tag}`);
+});
 
-// Message-based command handler
+// Message handler
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
   if (!message.content.startsWith(PREFIX)) return;
 
   const args = message.content.slice(PREFIX.length).trim().split(/ +/);
-  const command = args.shift().toLowerCase();
+  const cmd = args.shift().toLowerCase();
 
   try {
-    // +nation <id>
-   if (command === "nation") {
-  const id = args[0];
-  if (!id) return message.reply("Provide a nation ID.");
 
-  const data = await pnw(`nation/id=${id}?`);
-  if (!data || !data.name) return message.reply("Nation not found.");
-
-  message.reply(
-    `🏳️ ${data.name}
-👤 Leader: ${data.leadername}
-🏙 Cities: ${data.cities}
-📊 Score: ${data.score}`
-  );
-}
-    // +alliance <id>
-    if (command === "alliance") {
+    // ------------------ NATION ------------------
+    if (cmd === "nation") {
       const id = args[0];
-      if (!id) return message.reply("Please provide an alliance ID.");
-      const data = await pnw(`alliance?id=${id}`);
-      if (!data.alliance) return message.reply("Alliance not found.");
+      if (!id) return message.reply("Provide nation ID.");
+      const data = await pnw(`https://api.politicsandwar.com/api/nation/id=${id}?`);
+      if (!data || !data.name) return message.reply("Nation not found.");
       return message.reply(
-        `🏛️ **${data.alliance.name}**\n` +
-        `👥 Members: ${data.alliance.members?.length || 0}\n` +
-        `📊 Score: ${data.alliance.score}`
+        `🏳️ Nation: ${data.name}\n` +
+        `👤 Leader: ${data.leadername}\n` +
+        `🌆 Cities: ${data.cities}\n` +
+        `📊 Score: ${data.score}`
       );
     }
 
-    // +warroom <nationid>
-    if (command === "warroom") {
-      const nid = args[0];
-      if (!nid) return message.reply("Please provide a nation ID.");
-      const data = await pnw(`nation?id=${nid}`);
-      if (!data.nation) return message.reply("Nation not found.");
+    // ------------------ ALLIANCE ------------------
+    if (cmd === "alliance") {
+      const id = args[0];
+      if (!id) return message.reply("Provide alliance ID.");
+      const data = await pnw(`https://api.politicsandwar.com/api/alliance/id=${id}?`);
+      if (!data || !data.name) return message.reply("Alliance not found.");
+      return message.reply(
+        `🏛️ Alliance: ${data.name}\n` +
+        `👥 Members: ${data.members}\n` +
+        `📊 Score: ${data.score}`
+      );
+    }
 
-      const safeName = data.nation.leader.replace(/[^a-zA-Z0-9]/g, "");
-      const room = await message.guild.channels.create({
-        name: `war-${data.nation.nationid}-${safeName}`,
-        type: 0 // GUILD_TEXT
+    // ------------------ WARROOM ------------------
+    if (cmd === "warroom") {
+      const id = args[0];
+      if (!id) return message.reply("Provide nation ID.");
+      const data = await pnw(`https://api.politicsandwar.com/api/nation/id=${id}?`);
+      if (!data || !data.name) return message.reply("Nation not found.");
+
+      const channel = await message.guild.channels.create({
+        name: `war-${data.name}`.replace(/ /g,"-"),
+        type: 0
       });
 
-      await room.send(
-        `🔺 **WAR ROOM CREATED**\n` +
-        `🏳️ Nation: ${data.nation.name} (${data.nation.nationid})\n` +
-        `👤 Leader: ${data.nation.leader}`
+      // Apply warRoles
+      for (const roleID of warRoles) {
+        await channel.permissionOverwrites.create(roleID, {
+          ViewChannel: true,
+          SendMessages: true
+        });
+      }
+
+      channel.send(
+        `⚔ WAR ROOM CREATED\nNation: ${data.name}\nLeader: ${data.leadername}\nCities: ${data.cities}`
       );
 
-      return message.reply(`War room created → ${room}`);
+      return message.reply(`War room created: ${channel}`);
     }
 
-    // +spytarget
-    if (command === "spytarget") {
-      const wars = await pnw(`wars?active=true`);
-      const targets = (wars.wars || []).filter(
-        (w) => w.war_type === "raid" || w.war_type === "attrition"
-      );
-      if (!targets.length) return message.reply("No spy targets found.");
-      const pick = targets[Math.floor(Math.random() * targets.length)];
-      return message.reply(`🎯 Spy target: Nation **${pick.defender_nation_id}**`);
+    // ------------------ WARROLE ------------------
+    if (cmd === "warrole") {
+      const role = message.mentions.roles.first();
+      if (!role) return message.reply("Mention a role to add.");
+      if (!warRoles.includes(role.id)) warRoles.push(role.id);
+      return message.reply(`Role ${role.name} will now be added to all war rooms.`);
     }
 
-    // +inactive
-    if (command === "inactive") {
+    // ------------------ WARADD ------------------
+    if (cmd === "waradd") {
+      const user = message.mentions.users.first();
+      if (!user) return message.reply("Mention a user to add.");
+      await message.channel.permissionOverwrites.create(user.id, {
+        ViewChannel: true,
+        SendMessages: true
+      });
+      return message.reply(`${user.username} added to this war room.`);
+    }
+
+    // ------------------ WARCLOSE ------------------
+    if (cmd === "warclose") {
+      if (!message.channel.name.startsWith("war-")) return message.reply("Not a war room.");
+      await message.channel.delete();
+      return;
+    }
+
+    // ------------------ SPY TARGET ------------------
+    if (cmd === "spytarget") {
+      // grabs active wars
+      const data = await pnw(`https://api.politicsandwar.com/api/wars/?`);
+      if (!data || !data.wars) return message.reply("Could not fetch wars.");
+      const wars = data.wars.filter(w => w.war_type === "raid");
+      if (!wars.length) return message.reply("No spy targets.");
+      const pick = wars[Math.floor(Math.random() * wars.length)];
+      return message.reply(`🎯 Spy target nation ID: ${pick.defender_nation_id}`);
+    }
+
+    // ------------------ INACTIVE ------------------
+    if (cmd === "inactive") {
       const members = await message.guild.members.fetch();
       const inactive = members.filter(m => m.presence?.status === "offline");
       return message.reply(
-        `Inactive members: ${inactive.map(m => m.user.tag).join(", ") || "None"}`
+        `Inactive members:\n${inactive.map(m=>m.user.tag).join("\n") || "None"}`
       );
     }
 
-    // +colorbloc
-    if (command === "colorbloc") {
-      const members = await message.guild.members.fetch();
-      const wrongColor = members.filter(m => m.roles.cache.has("wrongRoleID")); // Replace with actual color role ID
-      return message.reply(
-        `Members in wrong color bloc: ${wrongColor.map(m => m.user.tag).join(", ") || "None"}`
-      );
+    // ------------------ COLORBLOC ------------------
+    if (cmd === "colorbloc") {
+      return message.reply("Color bloc audit not configured yet.");
     }
 
-    // +policyaudit
-    if (command === "policyaudit") {
-      const members = await message.guild.members.fetch();
-      // Example: check policy role
-      const wrongPolicy = members.filter(m => !m.roles.cache.has("correctPolicyRoleID"));
-      return message.reply(
-        `Members with wrong policy: ${wrongPolicy.map(m => m.user.tag).join(", ") || "None"}`
-      );
+    // ------------------ POLICY ------------------
+    if (cmd === "policyaudit") {
+      return message.reply("Policy audit not configured yet.");
     }
 
   } catch (err) {
-    console.error("Command error:", err);
-    message.reply("An error occurred while executing this command.");
+    console.log(err);
+    return message.reply("Command error.");
   }
+
 });
 
-// Login
 client.login(process.env.BOT_TOKEN);
